@@ -21,6 +21,7 @@ The Inventory Service is a **business microservice** responsible for managing th
 - **Validation:** Bean Validation (Hibernate Validator)
 - **Utilities:** Lombok
 - **Monitoring:** Spring Boot Actuator
+- **Containerization:** Docker
 - **Build Tool:** Maven
 
 ## 📦 Dependencies
@@ -113,6 +114,8 @@ eureka:
       defaultZone: http://localhost:8761/eureka/
 ```
 
+---
+
 ## 🚀 How to Run
 
 ### Prerequisites
@@ -121,6 +124,88 @@ eureka:
 - Maven 3.8+
 - Service Registry running on port 8761
 - Config Server running on port 8888
+- Docker (for containerized deployment)
+
+---
+
+## 🐳 Option 1: Running with Docker (Recommended)
+
+### Quick Start
+
+```bash
+# Ensure infrastructure services are running first
+docker run -d --name service-registry --network ecommerce-network -p 8761:8761 ecommerce-service-registry:latest
+docker run -d --name config-server --network ecommerce-network -p 8888:8888 ecommerce-config-server:latest
+docker run -d --name api-gateway --network ecommerce-network -p 8080:8080 ecommerce-api-gateway:latest
+
+# Run Inventory Service
+docker run -d \
+  --name inventory-service \
+  --network ecommerce-network \
+  -p 8081:8081 \
+  -e SPRING_CONFIG_IMPORT=configserver:http://config-server:8888 \
+  -e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/ \
+  ecommerce-inventory-service:latest
+```
+
+### Building the Docker Image
+
+```bash
+# Clone the repository
+git clone https://github.com/DanLearnings/ecommerce-inventory-service.git
+cd ecommerce-inventory-service
+
+# Build the Docker image
+docker build -t ecommerce-inventory-service:latest .
+
+# Run the container
+docker run -d \
+  --name inventory-service \
+  --network ecommerce-network \
+  -p 8081:8081 \
+  ecommerce-inventory-service:latest
+```
+
+### Docker Environment Variables
+
+```bash
+# Run with custom configurations
+docker run -d \
+  --name inventory-service \
+  --network ecommerce-network \
+  -p 8081:8081 \
+  -e JAVA_OPTS="-Xmx1g -Xms512m" \
+  -e SPRING_CONFIG_IMPORT=configserver:http://config-server:8888 \
+  -e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/ \
+  ecommerce-inventory-service:latest
+```
+
+### Viewing Logs
+
+```bash
+# View logs
+docker logs inventory-service
+
+# Follow logs in real-time
+docker logs -f inventory-service
+```
+
+### Stopping and Removing
+
+```bash
+# Stop the container
+docker stop inventory-service
+
+# Remove the container
+docker rm inventory-service
+
+# Stop and remove in one command
+docker rm -f inventory-service
+```
+
+---
+
+## 💻 Option 2: Running with Maven (Development)
 
 ### Running Locally
 
@@ -138,14 +223,7 @@ mvn clean package
 java -jar target/ecommerce-inventory-service-1.0.0.jar
 ```
 
-### Running with Docker (Coming Soon)
-
-```bash
-docker run -p 8081:8081 \
-  -e SPRING_CONFIG_IMPORT=configserver:http://config-server:8888 \
-  -e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/ \
-  ghcr.io/danlearnings/ecommerce-inventory-service:latest
-```
+---
 
 ## 📋 Data Model
 
@@ -187,6 +265,8 @@ CREATE TABLE products (
     sku VARCHAR(255) UNIQUE
 );
 ```
+
+---
 
 ## 🔍 API Endpoints
 
@@ -317,6 +397,8 @@ curl "http://localhost:8080/inventory-service/products/1/check-stock?quantity=10
 true  // or false
 ```
 
+---
+
 ## 🧪 Testing with Postman
 
 ### Import Collection
@@ -332,6 +414,8 @@ A complete Postman collection is available with pre-configured requests for all 
 5. **Check stock** (GET check-stock)
 6. **Delete product** (DELETE)
 7. **Verify deletion** (GET by ID) - Should return 404
+
+---
 
 ## ✅ Health Check
 
@@ -357,6 +441,8 @@ curl http://localhost:8081/products
 # Password: (empty)
 ```
 
+---
+
 ## 🐛 Troubleshooting
 
 ### Service fails to start - Port 8081 already in use
@@ -370,6 +456,9 @@ taskkill /PID <PID> /F
 # Linux/Mac
 lsof -i :8081
 kill -9 <PID>
+
+# Docker: Use different host port
+docker run -p 9081:8081 ecommerce-inventory-service:latest
 ```
 
 ### Service starts on wrong port (8080 instead of 8081)
@@ -405,6 +494,90 @@ kill -9 <PID>
 3. Review logs for specific error messages
 4. Ensure H2 dependency is present in `pom.xml`
 
+### Docker: Cannot connect to Config Server
+
+**Symptom:** Service logs show "Could not locate PropertySource"
+
+**Solution:**
+```bash
+# Verify Config Server is running and accessible
+docker ps | grep config-server
+
+# Test connectivity from inventory-service container
+docker exec inventory-service ping config-server
+
+# Ensure environment variable uses container name
+-e SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+
+# Verify all containers are in the same network
+docker network inspect ecommerce-network
+```
+
+### Docker: Cannot connect to Eureka
+
+**Symptom:** Service logs show Eureka connection errors
+
+**Solution:**
+```bash
+# Verify Service Registry is running
+docker ps | grep service-registry
+
+# Test connectivity
+docker exec inventory-service ping service-registry
+
+# Ensure environment variable is correct
+-e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/
+```
+
+### Docker: Data not persisting between restarts
+
+**Symptom:** Products disappear when container restarts
+
+**Solution:**
+```bash
+# This is expected behavior with H2 in-memory database
+# Data is lost on restart
+
+# For persistent data, use volume mount:
+docker run -v inventory-data:/data \
+  -e SPRING_DATASOURCE_URL=jdbc:h2:file:/data/inventorydb \
+  ecommerce-inventory-service:latest
+
+# Or migrate to PostgreSQL for production
+```
+
+---
+
+## 🐳 Docker Image Details
+
+### Multi-stage Build
+
+The Dockerfile uses a multi-stage build:
+- **Stage 1 (build):** Uses Maven image to compile the application
+- **Stage 2 (runtime):** Uses lightweight JRE image to run the application
+
+### Important Docker Features
+
+- **Non-root user:** Runs as `spring:spring` for security
+- **Health check:** Built-in health check with 60s start period (allows time for Config Server connection and DB initialization)
+- **Environment variables:** Customizable Config Server and Eureka locations
+- **Layered architecture:** Optimized Docker layers for faster rebuilds
+
+### Health Check
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8081/actuator/health || exit 1
+```
+
+*Note: Longer start period (60s) allows time for:*
+- Config Server connection
+- Eureka registration
+- Database initialization
+- Application context startup
+
+---
+
 ## 🔮 Future Enhancements
 
 - [ ] **DTOs:** Separate domain models from API contracts
@@ -418,11 +591,14 @@ kill -9 <PID>
 - [ ] **Caching:** Add Redis for frequently accessed products
 - [ ] **Search:** Elasticsearch integration for advanced search
 
+---
+
 ## 📚 Additional Resources
 
 - [Spring Data JPA Documentation](https://spring.io/projects/spring-data-jpa)
 - [Spring Web (REST) Guide](https://spring.io/guides/gs/rest-service/)
 - [Bean Validation Reference](https://docs.spring.io/spring-framework/reference/core/validation/beanvalidation.html)
+- [Docker Documentation](https://docs.docker.com/)
 
 ## 🔗 Related Services
 
@@ -431,10 +607,12 @@ kill -9 <PID>
 - [API Gateway](https://github.com/DanLearnings/ecommerce-api-gateway) - Routes client requests
 - [Order Service](https://github.com/DanLearnings/ecommerce-order-service) - Will consume this service (planned)
 
+---
+
 ## 👨‍💻 Maintainer
 
-**Dan Learnings**
-- GitHub: [@DanrleyBrasil](https://github.com/DanrleyBrasil)
+**Danrley Brasil (Dan Learnings)**
+- Personal GitHub: [@DanrleyBrasil](https://github.com/DanrleyBrasil)
 - Organization: [DanLearnings](https://github.com/DanLearnings)
 
 ---
